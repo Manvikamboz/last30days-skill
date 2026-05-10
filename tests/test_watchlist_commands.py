@@ -177,6 +177,61 @@ def test_cmd_list_with_topics(temp_db, capsys):
     assert topic_names == {"Topic 1", "Topic 2", "Topic 3"}
 
 
+# === Tests for cmd_delta() ===
+
+def test_cmd_delta_outputs_topic_delta(temp_db, capsys):
+    """Test printing the latest watchlist delta as JSON."""
+    topic = store.add_topic("Test Topic")
+    previous_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(previous_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+        }
+    ])
+    current_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(current_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+        },
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New this run",
+        },
+    ])
+
+    args = Mock()
+    args.topic = "Test Topic"
+
+    watchlist.cmd_delta(args)
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+
+    assert output["topic"] == "Test Topic"
+    assert output["status"] == "ok"
+    assert output["current_run_id"] == current_run_id
+    assert output["previous_run_id"] == previous_run_id
+    assert output["new"] == 1
+    assert output["continued"] == 1
+
+
+def test_cmd_delta_unknown_topic_exits(temp_db):
+    """Test delta for an unknown topic exits with an error."""
+    args = Mock()
+    args.topic = "Missing Topic"
+
+    with pytest.raises(SystemExit):
+        watchlist.cmd_delta(args)
+
+
 # === Tests for cmd_config() ===
 
 def test_cmd_config_delivery(temp_db, capsys):

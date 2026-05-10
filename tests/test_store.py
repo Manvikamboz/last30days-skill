@@ -565,6 +565,88 @@ def test_store_findings_updates_existing_sighting_for_same_run(temp_db):
     assert sightings[0]["source_title"] == "Reddit 1 updated"
     assert sightings[0]["engagement_score"] == 15.0
 
+def test_get_latest_completed_runs_returns_newest_completed_only(temp_db):
+    """Test latest-run lookup ignores failed runs and orders newest first."""
+    topic = store.add_topic("Test Topic")
+    old_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.record_run(topic["id"], source_mode="v3", status="failed")
+    latest_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+
+    runs = store.get_latest_completed_runs(topic["id"], limit=2)
+
+    assert [run["id"] for run in runs] == [latest_run_id, old_run_id]
+
+
+def test_compute_topic_delta_compares_latest_two_runs(temp_db):
+    """Test watchlist delta classification using per-run sightings."""
+    topic = store.add_topic("Test Topic")
+    previous_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(previous_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+            "engagement_score": 10.0,
+            "relevance_score": 0.7,
+        },
+        {
+            "source": "x",
+            "source_url": "https://x.com/dropped/status/1",
+            "source_title": "Dropped",
+            "content": "Dropped this run",
+            "engagement_score": 20.0,
+            "relevance_score": 0.8,
+        },
+    ])
+    current_run_id = store.record_run(topic["id"], source_mode="v3", status="completed")
+    store.store_findings(current_run_id, topic["id"], [
+        {
+            "source": "reddit",
+            "source_url": "https://reddit.com/continued",
+            "source_title": "Continued",
+            "content": "Still present",
+            "engagement_score": 15.0,
+            "relevance_score": 0.7,
+        },
+        {
+            "source": "github",
+            "source_url": "https://github.com/example/new",
+            "source_title": "New",
+            "content": "New this run",
+            "engagement_score": 30.0,
+            "relevance_score": 0.9,
+        },
+    ])
+
+    delta = store.compute_topic_delta(topic["id"])
+
+    assert delta["status"] == "ok"
+    assert delta["current_run_id"] == current_run_id
+    assert delta["previous_run_id"] == previous_run_id
+    assert delta["new"] == 1
+    assert delta["continued"] == 1
+    assert delta["dropped"] == 1
+    assert [f["source_url"] for f in delta["findings"]["new"]] == ["https://github.com/example/new"]
+    assert [f["source_url"] for f in delta["findings"]["continued"]] == ["https://reddit.com/continued"]
+    assert [f["source_url"] for f in delta["findings"]["dropped"]] == ["https://x.com/dropped/status/1"]
+    assert delta["sources"] == {
+        "github": {"new": 1, "continued": 0, "dropped": 0},
+        "reddit": {"new": 0, "continued": 1, "dropped": 0},
+        "x": {"new": 0, "continued": 0, "dropped": 1},
+    }
+
+
+def test_compute_topic_delta_requires_two_completed_runs(temp_db):
+    """Test that delta reports insufficient history before two successful runs."""
+    topic = store.add_topic("Test Topic")
+    store.record_run(topic["id"], source_mode="v3", status="completed")
+
+    delta = store.compute_topic_delta(topic["id"])
+
+    assert delta["status"] == "insufficient_history"
+    assert "Need at least two completed runs" in delta["message"]
+
 
 def test_update_validates_allowed_columns(temp_db, sample_report):
     """Test update_run/update_finding accept valid keys and reject invalid keys."""

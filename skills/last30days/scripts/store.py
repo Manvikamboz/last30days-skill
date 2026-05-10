@@ -360,6 +360,22 @@ def update_run(run_id: int, **kwargs):
         conn.close()
 
 
+def get_latest_completed_runs(topic_id: int, limit: int = 2) -> List[Dict[str, Any]]:
+    """Return newest completed runs for a topic."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM research_runs
+               WHERE topic_id = ? AND status = 'completed'
+               ORDER BY datetime(run_date) DESC, id DESC
+               LIMIT ?""",
+            (topic_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 # --- Findings ---
 
 
@@ -534,6 +550,84 @@ def get_sightings_for_run(topic_id: int, run_id: int) -> List[Dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def compute_topic_delta(topic_id: int) -> Dict[str, Any]:
+    """Compare the latest completed watchlist run with the previous run."""
+    runs = get_latest_completed_runs(topic_id, limit=2)
+    topic = _get_topic_by_id(topic_id)
+    topic_name = topic["name"] if topic else str(topic_id)
+    if len(runs) < 2:
+        return {
+            "topic": topic_name,
+            "status": "insufficient_history",
+            "message": "Need at least two completed runs to compute a delta.",
+        }
+
+    current_run, previous_run = runs[0], runs[1]
+    current = _sightings_by_url(get_sightings_for_run(topic_id, current_run["id"]))
+    previous = _sightings_by_url(get_sightings_for_run(topic_id, previous_run["id"]))
+
+    current_urls = set(current)
+    previous_urls = set(previous)
+    new_urls = sorted(current_urls - previous_urls)
+    continued_urls = sorted(current_urls & previous_urls)
+    dropped_urls = sorted(previous_urls - current_urls)
+
+    findings = {
+        "new": [current[url] for url in new_urls],
+        "continued": [current[url] for url in continued_urls],
+        "dropped": [previous[url] for url in dropped_urls],
+    }
+
+    return {
+        "topic": topic_name,
+        "status": "ok",
+        "current_run_id": current_run["id"],
+        "previous_run_id": previous_run["id"],
+        "new": len(new_urls),
+        "continued": len(continued_urls),
+        "dropped": len(dropped_urls),
+        "sources": _delta_source_counts(findings),
+        "findings": findings,
+    }
+
+
+def _get_topic_by_id(topic_id: int) -> Optional[Dict[str, Any]]:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _sightings_by_url(sightings: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {
+        sighting["source_url"]: sighting
+        for sighting in sightings
+        if sighting.get("source_url")
+    }
+
+
+def _delta_source_counts(
+    findings: Dict[str, List[Dict[str, Any]]]
+) -> Dict[str, Dict[str, int]]:
+    sources = sorted({
+        finding.get("source") or "unknown"
+        for group in findings.values()
+        for finding in group
+    })
+    counts = {
+        source: {"new": 0, "continued": 0, "dropped": 0}
+        for source in sources
+    }
+    for group_name, group in findings.items():
+        for finding in group:
+            source = finding.get("source") or "unknown"
+            counts.setdefault(source, {"new": 0, "continued": 0, "dropped": 0})
+            counts[source][group_name] += 1
+    return counts
 
 
 def get_new_findings(
