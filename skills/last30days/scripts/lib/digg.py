@@ -44,8 +44,9 @@ ENRICH_CONFIG = {
     "deep": 5,
 }
 
-# X posts pulled per enriched cluster.
-POSTS_PER_CLUSTER = 3
+# X posts pulled per enriched cluster. Matches the 5-comment cap used by
+# Reddit/HN/YouTube/TikTok/GitHub enrichment.
+POSTS_PER_CLUSTER = 5
 
 SEARCH_TIMEOUT = 30
 POSTS_TIMEOUT = 15
@@ -285,9 +286,9 @@ def parse_digg_response(
                 "posts": [],
                 "relevance": round(relevance, 2),
                 "why_relevant": (
-                    f"Digg AI 1000 cluster (rank {rank}, {post_count} posts, {unique_authors} authors)"
+                    f"Digg cluster (rank {rank}, {post_count} posts, {unique_authors} authors)"
                     if rank is not None
-                    else f"Digg AI 1000 cluster ({post_count} posts, {unique_authors} authors)"
+                    else f"Digg cluster ({post_count} posts, {unique_authors} authors)"
                 ),
             }
         )
