@@ -451,9 +451,14 @@ def test_init_db_creates_finding_sightings_table(temp_db):
     table = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='finding_sightings'"
     ).fetchone()
+    columns = {
+        row[1]: row[3]
+        for row in conn.execute("PRAGMA table_info(finding_sightings)").fetchall()
+    }
     conn.close()
 
     assert table is not None
+    assert columns["finding_id"] == 1
 
 
 def test_store_findings_records_sightings_for_new_findings(temp_db):

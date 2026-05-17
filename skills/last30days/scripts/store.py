@@ -163,7 +163,7 @@ MIGRATIONS: Dict[int, str] = {
     2: """
 CREATE TABLE IF NOT EXISTS finding_sightings (
     id INTEGER PRIMARY KEY,
-    finding_id INTEGER REFERENCES findings(id) ON DELETE CASCADE,
+    finding_id INTEGER NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
     run_id INTEGER REFERENCES research_runs(id) ON DELETE CASCADE,
     topic_id INTEGER REFERENCES topics(id) ON DELETE CASCADE,
     source TEXT NOT NULL,
