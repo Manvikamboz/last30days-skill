@@ -142,7 +142,7 @@ The repo vendors a search-only subset of Bird's Twitter GraphQL client and shell
 | Likes/reposts | Real (X API) | Real (x_search tool) |
 | Replies/quotes | Real | Real |
 | Author handle | Real | Real |
-| Relevance score | Default 0.7 (re-ranked by score.py) | AI-assessed 0.0-1.0 |
+| Relevance score | Default 0.7 (re-ranked by relevance.py) | AI-assessed 0.0-1.0 |
 
 ### Depth settings
 
