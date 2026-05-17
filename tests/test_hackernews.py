@@ -160,12 +160,44 @@ def test_title_matches_query_empty_query():
 
 
 def test_title_matches_query_partial_match():
-    """Test that all query words must match."""
+    """Any-word matching: at least one query token in title is enough.
+
+    Previously required *all* tokens, which killed every hit on multi-keyword
+    theme queries like 'claude, personal agents, agentic infra' since no real
+    HN title contains all 5 tokens verbatim. Token-overlap relevance at parse
+    time still demotes weak matches, so the loosened gate is safe.
+    """
     title = "New AI framework"
     query = "AI blockchain"
-    
-    # "blockchain" is not in title, so should fail
-    assert hackernews._title_matches_query(title, query) is False
+
+    # "AI" matches as a whole word, even though "blockchain" doesn't appear
+    assert hackernews._title_matches_query(title, query) is True
+
+
+def test_title_matches_query_no_token_in_title():
+    """If no query token appears in the title at all, reject."""
+    assert hackernews._title_matches_query("New rust compiler", "AI blockchain") is False
+
+
+def test_title_matches_query_word_boundary_not_substring():
+    """Short tokens must match on word boundaries, not as substrings.
+
+    Without word-boundary matching, 'ai' would falsely match 'email',
+    'rail', 'artists', etc.
+    """
+    # 'ai' as a substring of 'email' must not match
+    assert hackernews._title_matches_query("New email service", "ai blockchain") is False
+    # 'ai' as a whole word does match
+    assert hackernews._title_matches_query("Cool AI tool launched", "ai blockchain") is True
+
+
+def test_title_matches_query_flattens_hyphens_and_commas():
+    """Query tokens split on hyphens/commas the same way search_hackernews
+    flattens them, so the post-filter stays aligned with what Algolia saw."""
+    # query 'ts-bun-node' flattens to ['ts', 'bun', 'node']; title contains 'bun'
+    assert hackernews._title_matches_query("Bun 1.2 released", "ts-bun-node") is True
+    # query 'rust, go, zig' flattens; title contains 'go'
+    assert hackernews._title_matches_query("Go 1.24 generics update", "rust, go, zig") is True
 
 
 # === Tests for search_hackernews() ===
