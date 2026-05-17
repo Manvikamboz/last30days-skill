@@ -79,6 +79,8 @@ MOCK_AVAILABLE_SOURCES = [
     "xiaohongshu",
     "github",
     "perplexity",
+    "threads",
+    "pinterest",
     "xquik",
     "digg",
 ]
@@ -118,7 +120,9 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
         available.append("grounding")
     # Perplexity Sonar: opt-in additive source via INCLUDE_SOURCES=perplexity
     include_sources = (config.get("INCLUDE_SOURCES") or "").lower().split(",")
-    if config.get("OPENROUTER_API_KEY") and "perplexity" in include_sources:
+    if config.get("OPENROUTER_API_KEY") and (
+        "perplexity" in include_sources or (requested_sources and "perplexity" in requested_sources)
+    ):
         available.append("perplexity")
     if requested_sources and "xiaohongshu" in requested_sources and env.is_xiaohongshu_available(config):
         available.append("xiaohongshu")
