@@ -625,6 +625,7 @@ def main() -> int:
         # Auto-resolve: use web search to discover subreddits/handles before planning.
         # This is the engine-side equivalent of SKILL.md Steps 0.55/0.75 for platforms
         # without WebSearch (OpenClaw, Codex, raw CLI).
+        repos_from_auto_resolve = False
         if args.auto_resolve and not external_plan:
             from lib import resolve
             resolution = resolve.auto_resolve(topic, config)
@@ -639,6 +640,9 @@ def main() -> int:
                 sys.stderr.write(f"[AutoResolve] GitHub user: @{args.github_user}\n")
             if resolution.get("github_repos") and not args.github_repo:
                 args.github_repo = ",".join(resolution["github_repos"])
+                # auto_resolve already canonicalized via canonicalize_github_repos(cap=5);
+                # mark so we don't re-canonicalize below and clobber its relevance order.
+                repos_from_auto_resolve = True
                 sys.stderr.write(f"[AutoResolve] GitHub repos: {args.github_repo}\n")
             if resolution.get("context"):
                 # Inject context into external_plan metadata for the planner to use
@@ -651,7 +655,11 @@ def main() -> int:
         github_user = args.github_user.lstrip("@").lower() if args.github_user else None
         github_repos = [r.strip() for r in args.github_repo.split(",") if r.strip() and "/" in r.strip()] if args.github_repo else None
 
-        if github_repos:
+        # Only canonicalize when repos came from a user-supplied --github-repo flag.
+        # When repos_from_auto_resolve is True, auto_resolve already ran
+        # canonicalize_github_repos(cap=5) and ranked by relevance; re-running here
+        # with cap=None can re-sort by topic-slug match and lose that ordering.
+        if github_repos and not repos_from_auto_resolve:
             from lib import resolve as resolve_lib
             original_github_repos = github_repos[:]
             github_repos = resolve_lib.canonicalize_github_repos(topic, github_repos, cap=None)

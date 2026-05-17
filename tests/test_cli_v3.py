@@ -289,12 +289,19 @@ class CliV3Tests(unittest.TestCase):
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 rc = cli.main()
         self.assertEqual(0, rc)
-        # In vs-mode the main_runner is the first pipeline.run call; sub-runs
-        # for competitor entities follow with their own per-entity github_repos.
-        kwargs = run_mock.call_args_list[0].kwargs
-        self.assertEqual(
-            ["openai/codex", "anthropics/claude-code"],
-            kwargs["github_repos"],
+        # In vs-mode main + competitors run in parallel via ThreadPoolExecutor,
+        # so the order of pipeline.run invocations is non-deterministic. Find
+        # the main runner's call by predicate on the canonicalized github_repos
+        # rather than by index.
+        expected_repos = ["openai/codex", "anthropics/claude-code"]
+        main_call = next(
+            (c for c in run_mock.call_args_list if c.kwargs.get("github_repos") == expected_repos),
+            None,
+        )
+        self.assertIsNotNone(
+            main_call,
+            f"No pipeline.run call had github_repos={expected_repos}; "
+            f"saw {[c.kwargs.get('github_repos') for c in run_mock.call_args_list]}",
         )
         self.assertIn("[GitHub] Canonicalized repos:", stderr.getvalue())
 
