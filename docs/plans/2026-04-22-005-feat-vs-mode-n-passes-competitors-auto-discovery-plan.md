@@ -1,4 +1,7 @@
 ---
+
+> **NOTE (added 2026-05-16):** This plan references `bash scripts/sync.sh`. That script was deleted in [PR #405](https://github.com/mvanhorn/last30days-skill/pull/405); the install workflow is now `npx skills add . -g -y` (symlinks the working tree across every detected harness). For context on why sync.sh went away, see [docs/solutions/workflow-issues/release-consistency-test-cascade-2026-05-16.md](../solutions/workflow-issues/release-consistency-test-cascade-2026-05-16.md). The decisions captured in this plan remain accurate; only the deploy mechanism changed.
+
 title: "feat: vs mode runs N full passes and --competitors is vs with auto-discovery"
 type: feat
 status: active
