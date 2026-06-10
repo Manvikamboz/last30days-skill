@@ -285,7 +285,8 @@ def _build_nudge_text(
             )
         free_suggestions.append(
             f"YouTube returned {videos} videos but only {transcripts} transcripts "
-            f"captured{captions_note}. The most common remaining cause is a stale "
+            f"captured{captions_note}. This means transcript extraction was attempted "
+            "but failed for the candidates. The most common cause is a stale "
             "yt-dlp binary - YouTube's caption format changes frequently and old "
             "binaries silently fail every transcript. Update via your package "
             "manager: scoop update yt-dlp (Windows), brew upgrade yt-dlp (macOS), "

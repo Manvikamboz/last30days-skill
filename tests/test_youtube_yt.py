@@ -403,6 +403,162 @@ class TestSearchAndTranscribe(unittest.TestCase):
 
         ft_mock.assert_not_called()
 
+    def test_recent_videos_prioritized_over_old_high_view_videos(self):
+        """In-window videos are selected for transcripts before old high-view videos.
+
+        Regression test for the 'Andrej Karpathy' bug: old videos with millions of
+        views were consuming the entire transcript budget before any recent videos
+        were considered. After freshness filtering dropped the old videos, the
+        final report showed 0/N videos with transcripts despite successful fetching.
+        """
+        from_date = "2026-05-01"
+
+        old_viral = {
+            "video_id": "old_viral",
+            "title": "Old Viral Video",
+            "url": "https://www.youtube.com/watch?v=old_viral",
+            "channel_name": "BigChannel",
+            "date": "2024-01-15",  # outside the 30-day window
+            "engagement": {"views": 5_000_000, "likes": 100_000, "comments": 5_000},
+            "relevance": 0.9,
+            "why_relevant": "test",
+            "description": "very popular old video",
+        }
+        recent_video = {
+            "video_id": "recent_vid",
+            "title": "Recent Video",
+            "url": "https://www.youtube.com/watch?v=recent_vid",
+            "channel_name": "NewChannel",
+            "date": "2026-05-20",  # within the 30-day window
+            "engagement": {"views": 10_000, "likes": 500, "comments": 50},
+            "relevance": 0.8,
+            "why_relevant": "test",
+            "description": "recent video with low views",
+        }
+        items = [old_viral, recent_video]
+
+        called_ids = []
+
+        def fake_parallel(video_ids, max_workers=5, out_captions_disabled=None):
+            called_ids.extend(video_ids)
+            return {vid: None for vid in video_ids}
+
+        with mock.patch.object(youtube_yt, "search_youtube", return_value={"items": items}), \
+             mock.patch.object(youtube_yt, "fetch_transcripts_parallel", side_effect=fake_parallel):
+            youtube_yt.search_and_transcribe("test topic", from_date, "2026-05-31", depth="default")
+
+        # The recent in-window video must appear before the old viral video in
+        # the transcript candidate list, regardless of view count ordering.
+        self.assertIn("recent_vid", called_ids)
+        self.assertIn("old_viral", called_ids)
+        recent_idx = called_ids.index("recent_vid")
+        old_idx = called_ids.index("old_viral")
+        self.assertLess(
+            recent_idx, old_idx,
+            f"recent_vid (idx={recent_idx}) should appear before old_viral "
+            f"(idx={old_idx}) in transcript candidates",
+        )
+
+
+class TestPrioritizeRecentForTranscripts(unittest.TestCase):
+    """Unit tests for the _prioritize_recent_for_transcripts() helper."""
+
+    def _make_item(self, video_id, date, views):
+        return {
+            "video_id": video_id,
+            "date": date,
+            "engagement": {"views": views},
+        }
+
+    def test_in_window_before_out_of_window(self):
+        """In-window items always precede out-of-window items."""
+        items = [
+            self._make_item("old1", "2024-01-01", 5_000_000),
+            self._make_item("old2", "2023-06-01", 3_000_000),
+            self._make_item("new1", "2026-05-10", 10_000),
+            self._make_item("new2", "2026-05-20", 5_000),
+        ]
+        result = youtube_yt._prioritize_recent_for_transcripts(items, "2026-05-01")
+        ids = [i["video_id"] for i in result]
+        # All in-window items must come before any out-of-window item
+        new_indices = [ids.index("new1"), ids.index("new2")]
+        old_indices = [ids.index("old1"), ids.index("old2")]
+        self.assertLess(max(new_indices), min(old_indices))
+
+    def test_in_window_sorted_by_views_descending(self):
+        """In-window items are sorted by views descending."""
+        items = [
+            self._make_item("new_low", "2026-05-10", 1_000),
+            self._make_item("new_high", "2026-05-15", 500_000),
+            self._make_item("new_mid", "2026-05-20", 50_000),
+        ]
+        result = youtube_yt._prioritize_recent_for_transcripts(items, "2026-05-01")
+        ids = [i["video_id"] for i in result]
+        self.assertEqual(ids, ["new_high", "new_mid", "new_low"])
+
+    def test_out_of_window_sorted_by_views_descending(self):
+        """Out-of-window items are sorted by views descending."""
+        items = [
+            self._make_item("old_low", "2024-01-01", 100_000),
+            self._make_item("old_high", "2023-06-01", 5_000_000),
+        ]
+        result = youtube_yt._prioritize_recent_for_transcripts(items, "2026-05-01")
+        ids = [i["video_id"] for i in result]
+        self.assertEqual(ids, ["old_high", "old_low"])
+
+    def test_all_in_window_preserves_view_order(self):
+        """When all items are in-window, result is sorted by views (same as before)."""
+        items = [
+            self._make_item("a", "2026-05-01", 1_000),
+            self._make_item("b", "2026-05-10", 500_000),
+            self._make_item("c", "2026-05-20", 100_000),
+        ]
+        result = youtube_yt._prioritize_recent_for_transcripts(items, "2026-05-01")
+        ids = [i["video_id"] for i in result]
+        self.assertEqual(ids, ["b", "c", "a"])
+
+    def test_items_without_date_treated_as_out_of_window(self):
+        """Items with no date field are treated as out-of-window."""
+        items = [
+            {"video_id": "no_date", "engagement": {"views": 999_999}},
+            self._make_item("in_window", "2026-05-15", 1_000),
+        ]
+        result = youtube_yt._prioritize_recent_for_transcripts(items, "2026-05-01")
+        ids = [i["video_id"] for i in result]
+        self.assertEqual(ids[0], "in_window", "in-window item should come first")
+        self.assertEqual(ids[1], "no_date", "dateless item treated as out-of-window")
+
+    def test_combined_ordering_view_sort_per_bucket(self):
+        """View ordering is preserved within each bucket in the final concatenated output.
+
+        Uses deliberately scrambled input so the test would fail if either
+        bucket's sort were skipped or if the two buckets were merged before sorting.
+        Expected final order: [in_high, in_mid, in_low, out_high, out_mid, out_low]
+        """
+        items = [
+            # Input is intentionally scrambled — not sorted by views or date
+            self._make_item("out_mid",  "2023-03-01",  500_000),
+            self._make_item("in_low",   "2026-05-05",    1_000),
+            self._make_item("out_high", "2024-01-01",  5_000_000),
+            self._make_item("in_high",  "2026-05-15",    800_000),
+            self._make_item("out_low",  "2022-12-01",    200_000),
+            self._make_item("in_mid",   "2026-05-10",    100_000),
+        ]
+        result = youtube_yt._prioritize_recent_for_transcripts(items, "2026-05-01")
+        ids = [i["video_id"] for i in result]
+        self.assertEqual(
+            ids,
+            ["in_high", "in_mid", "in_low", "out_high", "out_mid", "out_low"],
+            "in-window bucket (views desc) must precede out-of-window bucket (views desc)",
+        )
+
+    def test_empty_list_returns_empty(self):
+        """Empty input returns empty output."""
+        result = youtube_yt._prioritize_recent_for_transcripts([], "2026-05-01")
+        self.assertEqual(result, [])
+
+
+
 
 class TestYtdlpSSHRouting(unittest.TestCase):
     """LAST30DAYS_YOUTUBE_SSH_HOST routes yt-dlp invocations through SSH for residential IP."""

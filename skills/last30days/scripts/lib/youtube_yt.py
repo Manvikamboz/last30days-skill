@@ -642,6 +642,40 @@ def fetch_transcripts_parallel(
     return results
 
 
+def _prioritize_recent_for_transcripts(
+    items: List[Dict[str, Any]],
+    from_date: str,
+) -> List[Dict[str, Any]]:
+    """Return items prioritizing those within the date window for transcript fetching.
+
+    In-window videos (date >= from_date) are placed first, sorted by views
+    descending. Out-of-window videos follow, also sorted by views descending.
+    This ensures the transcript budget is spent on videos most likely to
+    survive the freshness filtering stage and appear in the final report.
+
+    Preserves existing view-based ordering for topics where all videos are
+    recent (no behavioral change when in-window == all items).
+
+    Args:
+        items: Video item dicts (each has 'date' and 'engagement.views' keys)
+        from_date: Start of the requested date window (YYYY-MM-DD)
+
+    Returns:
+        Re-ordered list: in-window items first (by views), then out-of-window (by views).
+    """
+    in_window = [
+        i for i in items
+        if i.get("date") and i["date"] >= from_date
+    ]
+    out_of_window = [
+        i for i in items
+        if not (i.get("date") and i["date"] >= from_date)
+    ]
+    in_window.sort(key=lambda x: x.get("engagement", {}).get("views", 0), reverse=True)
+    out_of_window.sort(key=lambda x: x.get("engagement", {}).get("views", 0), reverse=True)
+    return in_window + out_of_window
+
+
 def search_and_transcribe(
     topic: str,
     from_date: str,
@@ -680,16 +714,24 @@ def search_and_transcribe(
     if not items:
         return search_result
 
-    # Step 2: Fetch transcripts for top videos by views.
+    # Step 2: Fetch transcripts, prioritizing in-window videos first.
     # Try more candidates than the limit because some videos (music videos,
     # short clips) lack captions. Attempt up to 3x the limit so we have a
     # good chance of reaching the target number of successful transcripts.
+    #
+    # IMPORTANT: candidates are selected from a date-prioritized ordering
+    # (in-window first, then out-of-window — both sorted by views desc)
+    # rather than the global view sort. This ensures the transcript budget
+    # is not consumed by high-view evergreen videos that will later be
+    # discarded by freshness filtering, which would produce 0/N transcripts
+    # in the final report for topics like "Andrej Karpathy".
     transcript_limit = TRANSCRIPT_LIMITS.get(depth, TRANSCRIPT_LIMITS["default"])
     transcripts: Dict[str, Optional[str]] = {}
     captions_disabled_ids: Set[str] = set()
     if transcript_limit > 0:
         attempt_count = min(len(items), transcript_limit * 3)
-        candidate_ids = [item["video_id"] for item in items[:attempt_count]]
+        prioritized = _prioritize_recent_for_transcripts(items, from_date)
+        candidate_ids = [item["video_id"] for item in prioritized[:attempt_count]]
         _log(f"Fetching transcripts for up to {attempt_count} videos (target: {transcript_limit}): {candidate_ids}")
         transcripts = fetch_transcripts_parallel(
             candidate_ids, out_captions_disabled=captions_disabled_ids,
@@ -944,12 +986,16 @@ def search_youtube_sc(
     # Sort by views
     items.sort(key=lambda x: x["engagement"]["views"], reverse=True)
 
-    # Step 2: Fetch transcripts for top videos
+    # Step 2: Fetch transcripts, prioritizing in-window videos first.
+    # Mirrors the fix in search_and_transcribe(): use date-prioritized ordering
+    # so the transcript budget is not consumed by high-view evergreen videos
+    # that will later be discarded by freshness filtering.
     transcript_limit = TRANSCRIPT_LIMITS.get(depth, TRANSCRIPT_LIMITS["default"])
     if transcript_limit > 0 and items:
         attempt_count = min(len(items), transcript_limit * 3)
+        prioritized = _prioritize_recent_for_transcripts(items, from_date)
         _log(f"Fetching SC transcripts for up to {attempt_count} videos (target: {transcript_limit})")
-        for item in items[:attempt_count]:
+        for item in prioritized[:attempt_count]:
             vid = item["video_id"]
             if not vid:
                 continue
